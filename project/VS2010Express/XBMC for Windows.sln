@@ -1,8 +1,8 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 2013
-VisualStudioVersion = 12.0.30501.0
+# Visual Studio Express 2013 for Windows Desktop
+VisualStudioVersion = 12.0.31101.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "XBMC", "XBMC.vcxproj", "{3A68081D-E8F9-4523-9436-530DE9E5530A}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Kodi", "XBMC.vcxproj", "{3A68081D-E8F9-4523-9436-530DE9E5530A}"
 	ProjectSection(ProjectDependencies) = postProject
 		{C8F6C172-56F2-4E76-B5FA-C3B423B31BE7} = {C8F6C172-56F2-4E76-B5FA-C3B423B31BE7}
 	EndProjectSection
@@ -48,6 +48,9 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libRTV", "..\..\lib\libRTV\libRTV.vcxproj", "{DD4818AE-7E35-40B7-A6A0-0FF83AA1C916}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "visWaveform", "..\..\xbmc\visualizations\WaveForm\Waveform.vcxproj", "{D450FE9A-CE56-4496-B4AB-379094E642F2}"
+	ProjectSection(ProjectDependencies) = postProject
+		{3A68081D-E8F9-4523-9436-530DE9E5530A} = {3A68081D-E8F9-4523-9436-530DE9E5530A}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "squish", "..\..\lib\libsquish\vs7\squish\squish_2010.vcxproj", "{6A8518C3-D81A-4428-BD7F-C37933088AC1}"
 EndProject
