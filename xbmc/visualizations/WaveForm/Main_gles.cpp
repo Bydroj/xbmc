@@ -1,45 +1,53 @@
 /*  XMMS - Cross-platform multimedia player
- *  Copyright (C) 1998-2000  Peter Alm, Mikael Alm, Olle Hallnas, Thomas Nilsson and 4Front Technologies
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
- */
+*  Copyright (C) 1998-2000  Peter Alm, Mikael Alm, Olle Hallnas, Thomas Nilsson and 4Front Technologies
+*
+*  This program is free software; you can redistribute it and/or modify
+*  it under the terms of the GNU General Public License as published by
+*  the Free Software Foundation; either version 2 of the License, or
+*  (at your option) any later version.
+*
+*  This program is distributed in the hope that it will be useful,
+*  but WITHOUT ANY WARRANTY; without even the implied warranty of
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*  GNU General Public License for more details.
+*
+*  You should have received a copy of the GNU General Public License
+*  along with this program; if not, write to the Free Software
+*  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+*/
 
 /*
- *  Wed May 24 10:49:37 CDT 2000
- *  Fixes to threading/context creation for the nVidia X4 drivers by
- *  Christian Zander <phoenix@minion.de>
- */
+*  Wed May 24 10:49:37 CDT 2000
+*  Fixes to threading/context creation for the nVidia X4 drivers by
+*  Christian Zander <phoenix@minion.de>
+*/
 
 /*
- *  Ported to GLES by gimli
- */
+*  Ported to GLES by gimli
+*/
 
 
 
 #include <string.h>
-#include <math.h>
+#include <cmath>
 #if defined(__APPLE__)
-  #include <OpenGLES/ES2/gl.h>
-  #include <OpenGLES/ES2/glext.h>
+#include <OpenGLES/ES2/gl.h>
+#include <OpenGLES/ES2/glext.h>
 #else
-  #include <GLES2/gl2.h>
-  #include <GLES2/gl2ext.h>
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
 #endif
 
 #include "addons/include/xbmc_vis_dll.h"
 #include "VisGUIShader.h"
+
+//th
+#include <curl/curl.h>
+#include "fft.h"
+//#include <string>
+#include <math.h>
+#include <sstream>
+//
 
 #define NUM_BANDS 16
 
@@ -58,31 +66,388 @@ GLenum  g_mode = GL_TRIANGLES;
 float g_fWaveform[2][512];
 
 const char *frag = "precision mediump float; \n"
-                   "varying lowp vec4 m_colour; \n"
-                   "void main () \n"
-                   "{ \n"
-                   "  gl_FragColor = m_colour; \n"
-                   "}\n";
+"varying lowp vec4 m_colour; \n"
+"void main () \n"
+"{ \n"
+"  gl_FragColor = m_colour; \n"
+"}\n";
 
 const char *vert = "attribute vec4 m_attrpos;\n"
-                   "attribute vec4 m_attrcol;\n"
-                   "attribute vec4 m_attrcord0;\n"
-                   "attribute vec4 m_attrcord1;\n"
-                   "varying vec4   m_cord0;\n"
-                   "varying vec4   m_cord1;\n"
-                   "varying lowp   vec4 m_colour;\n"
-                   "uniform mat4   m_proj;\n"
-                   "uniform mat4   m_model;\n"
-                   "void main ()\n"
-                   "{\n"
-                   "  mat4 mvp    = m_proj * m_model;\n"
-                   "  gl_Position = mvp * m_attrpos;\n"
-                   "  m_colour    = m_attrcol;\n"
-                   "  m_cord0     = m_attrcord0;\n"
-                   "  m_cord1     = m_attrcord1;\n"
-                   "}\n";
+"attribute vec4 m_attrcol;\n"
+"attribute vec4 m_attrcord0;\n"
+"attribute vec4 m_attrcord1;\n"
+"varying vec4   m_cord0;\n"
+"varying vec4   m_cord1;\n"
+"varying lowp   vec4 m_colour;\n"
+"uniform mat4   m_proj;\n"
+"uniform mat4   m_model;\n"
+"void main ()\n"
+"{\n"
+"  mat4 mvp    = m_proj * m_model;\n"
+"  gl_Position = mvp * m_attrpos;\n"
+"  m_colour    = m_attrcol;\n"
+"  m_cord0     = m_attrcord0;\n"
+"  m_cord1     = m_attrcord1;\n"
+"}\n";
 
 CVisGUIShader  *vis_shader = NULL;
+
+//th
+#define BUFFERSIZE 1024
+#define NUM_FREQUENCIES (512)
+CURL *curl;
+CURLcode res;
+
+namespace
+{
+  // User config settings
+  //UserSettings g_Settings;
+
+  FFT g_fftobj;
+
+  float fTime, fElapsedTime, fAppTime, fElapsedAppTime, fUpdateTime, fLastTime, fLightTime;
+  int iFrames = 0;
+  float fFPS = 0;
+}
+
+struct SoundData
+{
+  float   imm[2][3];                // bass, mids, treble, no damping, for each channel (long-term average is 1)
+  float   avg[2][3];               // bass, mids, treble, some damping, for each channel (long-term average is 1)
+  float   med_avg[2][3];          // bass, mids, treble, more damping, for each channel (long-term average is 1)
+  //    float   long_avg[2][3];        // bass, mids, treble, heavy damping, for each channel (long-term average is 1)
+  float   fWaveform[2][576];             // Not all 576 are valid! - only NUM_WAVEFORM_SAMPLES samples are valid for each channel (note: NUM_WAVEFORM_SAMPLES is declared in shell_defines.h)
+  float   fSpectrum[2][NUM_FREQUENCIES]; // NUM_FREQUENCIES samples for each channel (note: NUM_FREQUENCIES is declared in shell_defines.h)
+
+  float specImm[32];
+  float specAvg[32];
+  float specMedAvg[32];
+
+  float bigSpecImm[512];
+  float leftBigSpecAvg[512];
+  float rightBigSpecAvg[512];
+};
+
+SoundData g_sound;
+float g_bass, g_bassLast;
+float g_treble, g_trebleLast;
+float g_middle, g_middleLast;
+float g_timePass;
+bool g_finished, g_beat;
+
+
+//todo: get bridge IP from settings or from https://www.meethue.com/api/nupnp
+std::string strHueBridgeIPAddress = "192.168.10.6";
+std::string strHost = "Host: " + strHueBridgeIPAddress;
+std::string strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
+std::string strURLLight1 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/1/state";
+std::string strURLLight2 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/2/state";
+int lastHue;
+int initialHue;
+int targetHue;
+int maxBri = 75;
+
+
+struct timespec systemClock;
+
+
+void HTTP_POST(int bri, int sat, int transitionTime, bool on, bool off)
+{
+  std::string strJson;
+
+  if (on) //turn on
+    strJson = "{\"on\":true}";
+  else if (off) //turn light off
+    strJson = "{\"on\":false}";
+  else if (sat > 0) //change saturation
+  {
+    std::ostringstream oss;
+    oss << "{\"bri\":" << bri << ",\"hue\":" << lastHue <<
+      ",\"sat\":" << sat << ",\"transitiontime\":"
+      << transitionTime << "}";
+    strJson = oss.str();
+  }
+  else //change lights
+  {
+    std::ostringstream oss;
+    oss << "{\"bri\":" << bri << ",\"hue\":" << lastHue <<
+      ",\"transitiontime\":" << transitionTime << "}";
+    strJson = oss.str();
+  }
+
+  //request2 << "Content-Type: application/json" << endl;
+  //struct curl_slist *headers = NULL;
+  //curl = curl_easy_init();
+  if (curl) {
+    //append headers
+
+    // Now specify we want to PUT data, but not using a file, so it has o be a CUSTOMREQUEST
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+    //curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, strJson.c_str());
+
+    // Set the URL that is about to receive our POST. 
+    curl_easy_setopt(curl, CURLOPT_URL, strURLLight1.c_str());
+    // Perform the request, res will get the return code
+    res = curl_easy_perform(curl);
+
+    // Set the URL that is about to receive our POST.
+    curl_easy_setopt(curl, CURLOPT_URL, strURLLight2.c_str());
+    // Perform the request, res will get the return code
+    res = curl_easy_perform(curl);
+
+    // always cleanup 
+  }
+}
+//
+
+void TurnLightsOn()
+{
+  HTTP_POST(0, 0, 0, true, false);
+}
+
+void UpdateLights(int bri, int sat, int transitionTime)
+{
+  HTTP_POST(bri, sat, transitionTime, false, false);
+}
+
+void FastBeatLights(int bri)
+{
+  int transitionTime = int(10 / (60 / 60)); // transitionTime is in deciseconds
+  //transition the color immediately
+  UpdateLights(bri, 0, 0);
+  //fade brightness
+  UpdateLights(5, 0, transitionTime); //fade
+}
+
+void SlowBeatLights(int bri)
+{
+  int transitionTime = int(10 / (60 / 60)); // transitionTime is in deciseconds
+  //transition the color immediately
+  UpdateLights(bri, 0, 2);
+  //fade brightness
+  UpdateLights(5, 0, transitionTime - 2); //fade
+}
+
+void CycleHue(int huePoints)
+{
+  int hueGap;
+  if ((lastHue - targetHue) > 0) hueGap = lastHue - targetHue;
+  else hueGap = (lastHue - targetHue) * -1;
+  if (hueGap > huePoints)
+  {
+    if (lastHue > targetHue) lastHue = lastHue - huePoints;
+    else lastHue = lastHue + huePoints;
+  }
+  else
+  {
+    lastHue = targetHue;
+    targetHue = initialHue;
+    initialHue = lastHue;
+  }
+}
+
+void CycleLights(int bri)
+{
+  //this is called once per second if no beats are detected
+  CycleHue(3000);
+  UpdateLights(bri, 0, 10);
+}
+
+
+//taken from Vortex
+float AdjustRateToFPS(float per_frame_decay_rate_at_fps1, float fps1, float actual_fps)
+{
+  // returns the equivalent per-frame decay rate at actual_fps
+
+  // basically, do all your testing at fps1 and get a good decay rate;
+  // then, in the real application, adjust that rate by the actual fps each time you use it.
+
+  float per_second_decay_rate_at_fps1 = powf(per_frame_decay_rate_at_fps1, fps1);
+  float per_frame_decay_rate_at_fps2 = powf(per_second_decay_rate_at_fps1, 1.0f / actual_fps);
+
+  return per_frame_decay_rate_at_fps2;
+}
+
+//taken from Vortex
+void AnalyzeSound()
+{
+  // Some bits of this were pinched from Milkdrop...
+  int m_fps = 60;
+
+  // sum (left channel) spectrum up into 3 bands
+  // [note: the new ranges do it so that the 3 bands are equally spaced, pitch-wise]
+  float min_freq = 200.0f;
+  float max_freq = 11025.0f;
+  float net_octaves = (logf(max_freq / min_freq) / logf(2.0f));     // 5.7846348455575205777914165223593
+  float octaves_per_band = net_octaves / 3.0f;                    // 1.9282116151858401925971388407864
+  float mult = powf(2.0f, octaves_per_band); // each band's highest freq. divided by its lowest freq.; 3.805831305510122517035102576162
+  // [to verify: min_freq * mult * mult * mult should equal max_freq.]
+  //    for (int ch=0; ch<2; ch++)
+  {
+    for (int i = 0; i<3; i++)
+    {
+      // old guesswork code for this:
+      //   float exp = 2.1f;
+      //   int start = (int)(NUM_FREQUENCIES*0.5f*powf(i/3.0f, exp));
+      //   int end   = (int)(NUM_FREQUENCIES*0.5f*powf((i+1)/3.0f, exp));
+      // results:
+      //          old range:      new range (ideal):
+      //   bass:  0-1097          200-761
+      //   mids:  1097-4705       761-2897
+      //   treb:  4705-11025      2897-11025
+      int start = (int)(NUM_FREQUENCIES * min_freq*powf(mult, (float)i) / 11025.0f);
+      int end = (int)(NUM_FREQUENCIES * min_freq*powf(mult, (float)i + 1) / 11025.0f);
+      if (start < 0) start = 0;
+      if (end > NUM_FREQUENCIES) end = NUM_FREQUENCIES;
+
+      g_sound.imm[0][i] = 0;
+      for (int j = start; j<end; j++)
+      {
+        g_sound.imm[0][i] += g_sound.fSpectrum[0][j];
+        g_sound.imm[0][i] += g_sound.fSpectrum[1][j];
+      }
+      g_sound.imm[0][i] /= (float)(end - start) * 2;
+    }
+  }
+
+
+
+  // multiply by long-term, empirically-determined inverse averages:
+  // (for a trial of 244 songs, 10 seconds each, somewhere in the 2nd or 3rd minute,
+  //  the average levels were: 0.326781557	0.38087377	0.199888934
+  for (int ch = 0; ch<2; ch++)
+  {
+    g_sound.imm[ch][0] /= 0.326781557f;//0.270f;   
+    g_sound.imm[ch][1] /= 0.380873770f;//0.343f;   
+    g_sound.imm[ch][2] /= 0.199888934f;//0.295f;   
+  }
+
+  // do temporal blending to create attenuated and super-attenuated versions
+  for (int ch = 0; ch<2; ch++)
+  {
+    for (int i = 0; i<3; i++)
+    {
+      // g_sound.avg[i]
+      {
+        float avg_mix;
+        if (g_sound.imm[ch][i] > g_sound.avg[ch][i])
+          avg_mix = AdjustRateToFPS(0.2f, 14.0f, (float)m_fps);
+        else
+          avg_mix = AdjustRateToFPS(0.5f, 14.0f, (float)m_fps);
+        //                if (g_sound.imm[ch][i] > g_sound.avg[ch][i])
+        //                  avg_mix = 0.5f;
+        //                else 
+        //                  avg_mix = 0.8f;
+        g_sound.avg[ch][i] = g_sound.avg[ch][i] * avg_mix + g_sound.imm[ch][i] * (1 - avg_mix);
+      }
+
+      {
+        float med_mix = 0.91f;//0.800f + 0.11f*powf(t, 0.4f);    // primarily used for velocity_damping
+        float long_mix = 0.96f;//0.800f + 0.16f*powf(t, 0.2f);    // primarily used for smoke plumes
+        med_mix = AdjustRateToFPS(med_mix, 14.0f, (float)m_fps);
+        long_mix = AdjustRateToFPS(long_mix, 14.0f, (float)m_fps);
+        g_sound.med_avg[ch][i] = g_sound.med_avg[ch][i] * (med_mix)+g_sound.imm[ch][i] * (1 - med_mix);
+        //                g_sound.long_avg[ch][i] = g_sound.long_avg[ch][i]*(long_mix) + g_sound.imm[ch][i]*(1-long_mix);
+      }
+    }
+  }
+
+  float newBass = ((g_sound.avg[0][0] - g_sound.med_avg[0][0]) / g_sound.med_avg[0][0]) * 2;
+  float newMiddle = ((g_sound.avg[0][1] - g_sound.med_avg[0][1]) / g_sound.med_avg[0][1]) * 2;
+  float newTreble = ((g_sound.avg[0][2] - g_sound.med_avg[0][2]) / g_sound.med_avg[0][2]) * 2;
+  newBass = std::max(std::min(newBass, 1.0f), -1.0f);
+  newMiddle = std::max(std::min(newMiddle, 1.0f), -1.0f);
+  newTreble = std::max(std::min(newTreble, 1.0f), -1.0f);
+
+  g_bassLast = g_bass;
+  g_middleLast = g_middle;
+
+  float avg_mix;
+  if (newTreble > g_treble)
+    avg_mix = 0.5f;
+  else
+    avg_mix = 0.5f;
+
+  if (g_bass != g_bass) g_bass = 0;
+  if (g_middle != g_middle) g_middle = 0; //f'ing NaN's in linux
+  if (g_treble != g_treble) g_treble = 0;
+
+  g_bass = g_bass*avg_mix + newBass*(1 - avg_mix);
+  g_middle = g_middle*avg_mix + newMiddle*(1 - avg_mix);
+  //g_treble = g_treble*avg_mix + newTreble*(1 - avg_mix);  
+  //printf(" measure = %f*%f + %f*(1 - %f) ", g_middle,avg_mix,newMiddle,avg_mix);
+
+  g_bass = std::max(std::min(g_bass, 1.0f), -1.0f);
+  g_middle = std::max(std::min(g_middle, 1.0f), -1.0f);
+  //g_treble = std::max(std::min(g_treble, 1.0f), -1.0f);
+
+  //printf("%f\n", (g_middle - g_middleLast));
+
+  if (g_middle < 0) g_middle = g_middle * -1.0f;
+  if ((g_middle - g_middleLast) > 0.325f && !g_beat)
+  {
+    //beat?
+    g_beat = true;
+    FastBeatLights(maxBri);
+
+    CycleHue(1500);
+    //changed lights
+    fLightTime = fAppTime;
+  }
+  else g_beat = false;
+
+
+}
+
+void InitTime()
+{
+  // Save the start time
+  clock_gettime(CLOCK_MONOTONIC, &systemClock);
+  fTime = ((float)systemClock.tv_nsec / 1000000000.0) + (float)systemClock.tv_sec;
+
+  fAppTime = 0;
+  fElapsedTime = 0;
+  fElapsedAppTime = 0;
+  fLastTime = 0;
+  fLightTime = 0;
+  fUpdateTime = 0;
+
+}
+
+void UpdateTime()
+{
+  clock_gettime(CLOCK_MONOTONIC, &systemClock);
+  fTime = ((float)systemClock.tv_nsec / 1000000000.0) + (float)systemClock.tv_sec;
+  fElapsedTime = fTime - fLastTime;
+  fLastTime = fTime;
+  fAppTime += fElapsedTime;
+  //fElapsedAppTime = fElapsedTime;
+
+  printf("Time: %f, AppTime: %f, LightTime: %f\n", fTime, fAppTime, fLightTime);
+
+  // Keep track of the frame count
+  iFrames++;
+
+  //fBeatTime = 60.0f / (float)(bpm); //skip every other beat
+
+  // If beats aren't doing anything then cycle colors nicely
+  if (fAppTime - fLightTime > 1.5f)
+  {
+    CycleLights(maxBri);
+    fLightTime = fAppTime;
+  }
+
+  // Update the scene stats once per second
+  if (fAppTime - fUpdateTime > 1.0f)
+  {
+    fFPS = (float)(iFrames / (fAppTime - fLastTime));
+    fUpdateTime = fAppTime;
+    iFrames = 0;
+  }
+}
+//
+
 
 //-- Create -------------------------------------------------------------------
 // Called on load. Addon should fully initalize or return error status
@@ -94,14 +459,48 @@ ADDON_STATUS ADDON_Create(void* hdl, void* props)
 
   vis_shader = new CVisGUIShader(vert, frag);
 
-  if(!vis_shader)
+  if (!vis_shader)
     return ADDON_STATUS_UNKNOWN;
 
-  if(!vis_shader->CompileAndLink())
+  if (!vis_shader->CompileAndLink())
   {
     delete vis_shader;
     return ADDON_STATUS_UNKNOWN;
   }
+
+  //
+  //set Hue registration command
+  const char json[] = "{\"devicetype\":\"Kodi\",\"username\":\"KodiVisWave\"}";
+
+  //struct curl_slist *headers = NULL;
+  curl = curl_easy_init();
+  if (curl) {
+    curl_easy_setopt(curl, CURLOPT_TCP_NODELAY, 1);
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+    //curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json);
+
+    // Set the URL that is about to receive our POST.
+    curl_easy_setopt(curl, CURLOPT_URL, strURLRegistration.c_str());
+
+    // Perform the request, res will get the return code
+    res = curl_easy_perform(curl);
+
+    // always cleanup
+  }
+
+  lastHue = 65280;
+  initialHue = lastHue;
+  targetHue = 56100;
+
+  //turn the lights on
+  TurnLightsOn();
+  UpdateLights(maxBri, 255, 30);
+
+  //initialize the beat detection
+  InitTime();
+  g_fftobj.Init(576, NUM_FREQUENCIES);
+  //
 
   return ADDON_STATUS_NEED_SETTINGS;
 }
@@ -126,7 +525,7 @@ extern "C" void Render()
   vis_shader->LoadIdentity();
 
   vis_shader->PushMatrix();
-  vis_shader->Translatef(0.0f ,0.0f ,-1.0f);
+  vis_shader->Translatef(0.0f, 0.0f, -1.0f);
   vis_shader->Rotatef(0.0f, 1.0f, 0.0f, 0.0f);
   vis_shader->Rotatef(0.0f, 0.0f, 1.0f, 0.0f);
   vis_shader->Rotatef(0.0f, 0.0f, 0.0f, 1.0f);
@@ -186,7 +585,13 @@ extern "C" void Render()
   vis_shader->PopMatrix();
 
   glEnable(GL_BLEND);
-  
+
+  //get some interesting numbers to play with
+  UpdateTime();
+  //g_timePass = 1.0f / 60.f;//fElapsedAppTime;
+  g_timePass = fElapsedAppTime;
+  AnalyzeSound();
+
 }
 
 extern "C" void Start(int iChannels, int iSamplesPerSec, int iBitsPerSample, const char* szSongName)
@@ -195,17 +600,43 @@ extern "C" void Start(int iChannels, int iSamplesPerSec, int iBitsPerSample, con
 
 extern "C" void AudioData(const float* pAudioData, int iAudioDataLength, float *pFreqData, int iFreqDataLength)
 {
-  int ipos=0;
+  int ipos = 0;
   while (ipos < 512)
   {
-    for (int i=0; i < iAudioDataLength; i+=2)
+    for (int i = 0; i < iAudioDataLength; i += 2)
     {
-      g_fWaveform[0][ipos] = pAudioData[i  ]; // left channel
-      g_fWaveform[1][ipos] = pAudioData[i+1]; // right channel
+      g_fWaveform[0][ipos] = pAudioData[i]; // left channel
+      g_fWaveform[1][ipos] = pAudioData[i + 1]; // right channel
       ipos++;
       if (ipos >= 512) break;
     }
   }
+
+  //taken from Vortex
+  float tempWave[2][576];
+
+  int iPos = 0;
+  int iOld = 0;
+  //const float SCALE = (1.0f / 32768.0f ) * 255.0f;
+  while (iPos < 576)
+  {
+    for (int i = 0; i < iAudioDataLength; i += 2)
+    {
+      g_sound.fWaveform[0][iPos] = float((pAudioData[i] / 32768.0f) * 255.0f);
+      g_sound.fWaveform[1][iPos] = float((pAudioData[i + 1] / 32768.0f) * 255.0f);
+
+      // damp the input into the FFT a bit, to reduce high-frequency noise:
+      tempWave[0][iPos] = 0.5f * (g_sound.fWaveform[0][iPos] + g_sound.fWaveform[0][iOld]);
+      tempWave[1][iPos] = 0.5f * (g_sound.fWaveform[1][iPos] + g_sound.fWaveform[1][iOld]);
+      iOld = iPos;
+      iPos++;
+      if (iPos >= 576)
+        break;
+    }
+  }
+
+  g_fftobj.time_to_frequency_domain(tempWave[0], g_sound.fSpectrum[0]);
+  g_fftobj.time_to_frequency_domain(tempWave[1], g_sound.fSpectrum[1]);
 }
 
 
@@ -274,12 +705,18 @@ extern "C" void ADDON_Stop()
 //-----------------------------------------------------------------------------
 extern "C" void ADDON_Destroy()
 {
-  if (vis_shader) 
+  if (vis_shader)
   {
     vis_shader->Free();
     delete vis_shader;
     vis_shader = NULL;
   }
+
+  lastHue = 57000;
+  UpdateLights(maxBri, 255, 30);
+  g_fftobj.CleanUp();
+  // always cleanup 
+  curl_easy_cleanup(curl);
 }
 
 //-- HasSettings --------------------------------------------------------------
@@ -324,7 +761,7 @@ extern "C" void ADDON_FreeSettings()
 //-----------------------------------------------------------------------------
 extern "C" ADDON_STATUS ADDON_SetSetting(const char *strSetting, const void* value)
 {
-//    return ADDON_STATUS_OK;
+  //    return ADDON_STATUS_OK;
   return ADDON_STATUS_UNKNOWN;
 }
 

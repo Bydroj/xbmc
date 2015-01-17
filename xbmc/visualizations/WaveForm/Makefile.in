@@ -30,9 +30,9 @@ endif
 
 $(SLIB): $(OBJS)
 ifeq ($(findstring osx,$(ARCH)), osx)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -bundle -o $@ $(OBJS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -bundle -o $@ $(OBJS) fft.cpp -lcurl
 else
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -shared -o $@ $(OBJS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -shared -o $@ $(OBJS) fft.cpp -lcurl
 endif
 
 include @abs_top_srcdir@/Makefile.include

@@ -22,21 +22,7 @@
 // A simple visualisation example by MrC
 
 #include "addons/include/xbmc_vis_dll.h"
-//#include "addons/include/xbmc_addon_cpp_dll.h"
 #include <stdio.h>
-//th
-#include <curl/curl.h>
-#include <cstring>
-#include <string>
-#include <sstream>
-#include "fft.h"
-
-
-
-using namespace std;
-#define BUFFERSIZE 1024
-//
-
 #ifdef HAS_SDL_OPENGL
 #include <GL/glew.h>
 #else
@@ -44,6 +30,14 @@ using namespace std;
 #include <D3D9.h>
 #endif
 #endif
+
+//th
+#include <curl/curl.h>
+#include "fft.h"
+#include <string>
+#include <math.h>
+#include <sstream>
+//
 
 char g_visName[512];
 #ifndef HAS_SDL_OPENGL
@@ -67,12 +61,21 @@ typedef unsigned long D3DCOLOR;
 
 D3DVIEWPORT9  g_viewport;
 
+struct Vertex_t
+{
+  float x, y, z;
+  D3DCOLOR  col;
+};
+
+#ifndef HAS_SDL_OPENGL
+#define VERTEX_FORMAT     (D3DFVF_XYZ | D3DFVF_DIFFUSE)
+#endif
+
 //th
+#define BUFFERSIZE 1024
 #define NUM_FREQUENCIES (512)
 CURL *curl;
 CURLcode res;
-
-
 
 namespace
 {
@@ -81,13 +84,13 @@ namespace
 
   FFT g_fftobj;
 
+#ifdef _WIN32
   FLOAT fSecsPerTick;
   LARGE_INTEGER qwTime, qwLastTime, qwLightTime, qwElapsedTime, qwAppTime, qwElapsedAppTime;
-  FLOAT fTime, fElapsedTime, fAppTime, fElapsedAppTime, fBeatTime;
-  FLOAT fLastTime = 0;
-  FLOAT fLightTime = 0;
-  INT iFrames = 0;
-  FLOAT fFPS = 0;
+#endif
+  float fTime, fElapsedTime, fAppTime, fElapsedAppTime, fUpdateTime, fLastTime, fLightTime;
+  int iFrames = 0;
+  float fFPS = 0;
 }
 
 struct SoundData
@@ -116,44 +119,53 @@ float g_timePass;
 bool g_finished, g_beat;
 
 //todo: get bridge IP from settings or from https://www.meethue.com/api/nupnp
-string strHueBridgeIPAddress = "192.168.10.6";
-string strHost = "Host: " + strHueBridgeIPAddress;
-string strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
-string strURLLight1 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/1/state";
-string strURLLight2 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/2/state";
+std::string strHueBridgeIPAddress = "192.168.10.6";
+std::string strHost = "Host: " + strHueBridgeIPAddress;
+std::string strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
+std::string strURLLight1 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/1/state";
+std::string strURLLight2 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/2/state";
 int lastHue;
 int initialHue;
 int targetHue;
 int maxBri = 75;
 
-
-
-struct Vertex_t
-{
-  float x, y, z;
-  D3DCOLOR  col;
-};
-
-#ifndef HAS_SDL_OPENGL
-#define VERTEX_FORMAT     (D3DFVF_XYZ | D3DFVF_DIFFUSE)
+#ifndef _WIN32
+struct timespec systemClock;
 #endif
 
 
 
 void HTTP_POST(int bri, int sat, int transitionTime, bool on, bool off)
 {
-  string strJson;
+  std::string strJson;
 
   if (on) //turn on
     strJson = "{\"on\":true}";
   else if (off) //turn light off
     strJson = "{\"on\":false}";
   else if (sat > 0) //change saturation
+  {
+    std::ostringstream oss;
+    oss << "{\"bri\":" << bri << ",\"hue\":" << lastHue <<
+      ",\"sat\":" << sat << ",\"transitiontime\":"
+      << transitionTime << "}";
+    strJson = oss.str();
+  }
+  else //change lights
+  {
+    std::ostringstream oss;
+    oss << "{\"bri\":" << bri << ",\"hue\":" << lastHue <<
+      ",\"transitiontime\":" << transitionTime << "}";
+    strJson = oss.str();
+  }
+  /*
+  else if (sat > 0) //change saturation
     strJson = "{\"bri\":" + std::to_string(bri) +
       ",\"hue\":" + std::to_string(lastHue) + ",\"sat\":" + std::to_string(sat) + ",\"transitiontime\":" + std::to_string(transitionTime) + "}";
   else //change lights
     strJson = "{\"bri\":" + std::to_string(bri) +
       ",\"hue\":" + std::to_string(lastHue) + ",\"transitiontime\":" + std::to_string(transitionTime) + "}";
+  */
 
   //request2 << "Content-Type: application/json" << endl;
   //struct curl_slist *headers = NULL;
@@ -176,7 +188,7 @@ void HTTP_POST(int bri, int sat, int transitionTime, bool on, bool off)
     // Perform the request, res will get the return code
     res = curl_easy_perform(curl);
 
-    /* always cleanup */
+    // always cleanup 
   }
 }
 //
@@ -211,7 +223,10 @@ void SlowBeatLights(int bri)
 
 void CycleHue(int huePoints)
 {
-  if (abs(lastHue - targetHue) > huePoints)
+  int hueGap;
+  if ((lastHue - targetHue) > 0) hueGap = lastHue - targetHue;
+  else hueGap = (lastHue - targetHue) * -1;
+  if (hueGap > huePoints)
   {
     if (lastHue > targetHue) lastHue = lastHue - huePoints;
     else lastHue = lastHue + huePoints;
@@ -332,9 +347,16 @@ void AnalyzeSound()
   float newBass = ((g_sound.avg[0][0] - g_sound.med_avg[0][0]) / g_sound.med_avg[0][0]) * 2;
   float newMiddle = ((g_sound.avg[0][1] - g_sound.med_avg[0][1]) / g_sound.med_avg[0][1]) * 2;
   float newTreble = ((g_sound.avg[0][2] - g_sound.med_avg[0][2]) / g_sound.med_avg[0][2]) * 2;
+
+#ifdef _WIN32
   newBass = max(min(newBass, 1.0f), -1.0f);
   newMiddle = max(min(newMiddle, 1.0f), -1.0f);
   newTreble = max(min(newTreble, 1.0f), -1.0f);
+#else
+  newBass = std::max(std::min(newBass, 1.0f), -1.0f);
+  newMiddle = std::max(std::min(newMiddle, 1.0f), -1.0f);
+  newTreble = std::max(std::min(newTreble, 1.0f), -1.0f);
+#endif
 
   g_bassLast = g_bass;
   g_middleLast = g_middle;
@@ -344,15 +366,28 @@ void AnalyzeSound()
     avg_mix = 0.5f;
   else
     avg_mix = 0.5f;
+  
+  //crazy NaN's in linux
+  if (g_bass != g_bass) g_bass = 0;
+  if (g_middle != g_middle) g_middle = 0; 
+  if (g_treble != g_treble) g_treble = 0;
+
   g_bass = g_bass*avg_mix + newBass*(1 - avg_mix);
   g_middle = g_middle*avg_mix + newMiddle*(1 - avg_mix);
   //g_treble = g_treble*avg_mix + newTreble*(1 - avg_mix);
 
+#ifdef _WIN32
   g_bass = max(min(g_bass, 1.0f), -1.0f);
   g_middle = max(min(g_middle, 1.0f), -1.0f);
   //g_treble = max(min(g_treble, 1.0f), -1.0f);
+#else
+  g_bass = std::max(std::min(g_bass, 1.0f), -1.0f);
+  g_middle = std::max(std::min(g_middle, 1.0f), -1.0f);
+  //g_treble = std::max(std::min(g_treble, 1.0f), -1.0f);
+#endif
 
-  if ((g_middle - g_middleLast) > 0.4f && !g_beat)
+  if (g_middle < 0) g_middle = g_middle * -1.0f;
+  if ((g_middle - g_middleLast) > 0.325f && !g_beat)
   {
     //beat?
     g_beat = true;
@@ -369,6 +404,7 @@ void AnalyzeSound()
 
 VOID InitTime()
 {
+#ifdef _WIN32
   // Get the frequency of the timer
   LARGE_INTEGER qwTicksPerSec;
   QueryPerformanceFrequency(&qwTicksPerSec);
@@ -383,11 +419,24 @@ VOID InitTime()
   qwElapsedTime.QuadPart = 0;
   qwElapsedAppTime.QuadPart = 0;
   srand(qwTime.QuadPart);
+#else
+  // Save the start time
+  clock_gettime(CLOCK_MONOTONIC, &systemClock);
+  fTime = ((float)systemClock.tv_nsec / 1000000000.0) + (float)systemClock.tv_sec;
+#endif
+
+  fAppTime = 0;
+  fElapsedTime = 0;
+  fElapsedAppTime = 0;
+  fLastTime = 0;
+  fLightTime = 0;
+  fUpdateTime = 0;
 
 }
 
 VOID UpdateTime()
 {
+#ifdef _WIN32
   QueryPerformanceCounter(&qwTime);
   qwElapsedTime.QuadPart = qwTime.QuadPart - qwLastTime.QuadPart;
   qwLastTime.QuadPart = qwTime.QuadPart;
@@ -400,14 +449,18 @@ VOID UpdateTime()
   fElapsedTime = fSecsPerTick * ((FLOAT)(qwElapsedTime.QuadPart));
   fAppTime = fSecsPerTick * ((FLOAT)(qwAppTime.QuadPart));
   fElapsedAppTime = fSecsPerTick * ((FLOAT)(qwElapsedAppTime.QuadPart));
+#else
+  clock_gettime(CLOCK_MONOTONIC, &systemClock);
+  fTime = ((float)systemClock.tv_nsec / 1000000000.0) + (float)systemClock.tv_sec;
+  fElapsedTime = fTime - fLastTime;
+  fLastTime = fTime;
+  fAppTime += fElapsedTime;
+#endif
 
   // Keep track of the frame count
-
   iFrames++;
 
-
   //fBeatTime = 60.0f / (FLOAT)(bpm); //skip every other beat
-
 
   // If beats aren't doing anything then cycle colors nicely
   if (fAppTime - fLightTime > 1.5f)
@@ -418,10 +471,10 @@ VOID UpdateTime()
   
 
   // Update the scene stats once per second
-  if (fAppTime - fLastTime > 1.0f)
+  if (fAppTime - fUpdateTime > 1.0f)
   {
     fFPS = (float)(iFrames / (fAppTime - fLastTime));
-    fLastTime = fAppTime;
+    fUpdateTime = fAppTime;
     iFrames = 0;
   }
 }
@@ -452,7 +505,7 @@ ADDON_STATUS ADDON_Create(void* hdl, void* props)
   g_viewport.MaxZ = 1;
 
   //set Hue registration command
-  const char json[] = "{\"devicetype\":\"Kodi\",\"username\":\"KodiVisWave\"}";
+  std::string json = "{\"devicetype\":\"Kodi\",\"username\":\"KodiVisWave\"}";
 
   //struct curl_slist *headers = NULL;
   curl = curl_easy_init();
@@ -484,7 +537,7 @@ ADDON_STATUS ADDON_Create(void* hdl, void* props)
   //initialize the beat detection
   InitTime();
   g_fftobj.Init(576, NUM_FREQUENCIES);
-
+  //
 
   return ADDON_STATUS_OK;
   //return ADDON_STATUS_NEED_SAVEDSETTINGS;
@@ -612,7 +665,7 @@ extern "C" void Render()
 
   //get some interesting numbers to play with
   UpdateTime();
-  g_timePass = 1.0f / 60.f;//fElapsedAppTime;
+  //g_timePass = 1.0f / 60.f;//fElapsedAppTime;
   g_timePass = fElapsedAppTime;
   AnalyzeSound();
 
@@ -682,7 +735,7 @@ extern "C" void ADDON_Stop()
 //-----------------------------------------------------------------------------
 extern "C" void ADDON_Destroy()
 {
-  lastHue = 65000;
+  lastHue = 57000;
   UpdateLights(maxBri, 255, 20);
   g_fftobj.CleanUp();
   // always cleanup 
