@@ -220,11 +220,11 @@ void FastBeatLights()
   UpdateLights(5, 0, 10); //fade
 }
 
-void SlowBeatLights(int bri)
+void SlowBeatLights()
 {
   AdjustBrightness();
   //transition the color immediately
-  UpdateLights(bri, 0, 2);
+  UpdateLights(currentBri, 0, 2);
   //fade brightness
   UpdateLights(5, 0, 8); //fade
 }
@@ -466,15 +466,15 @@ VOID UpdateTime()
   // Keep track of the frame count
   iFrames++;
 
-  //fBeatTime = 60.0f / (FLOAT)(bpm); //skip every other beat
+  //fBeatTime = 60.0f / (float)(bpm); //skip every other beat
 
   // If beats aren't doing anything then cycle colors nicely
   if (fAppTime - fLightTime > 1.5f)
   {
-    CycleLights(); 
+    CycleLights();
     fLightTime = fAppTime;
   }
-  
+
   g_movingAvgMidSum = 0.0f;
   //update the max brightness based on the moving avg of the mid levels
   for (int i = 0; i<128; i++)
@@ -502,6 +502,7 @@ VOID UpdateTime()
     iFrames = 0;
   }
 }
+
 
 
 
@@ -566,6 +567,13 @@ extern "C" void Start(int iChannels, int iSamplesPerSec, int iBitsPerSample, con
   InitTime();
   g_fftobj.Init(576, NUM_FREQUENCIES);
   //
+
+  //initialize the moving average of mids
+  for (int i = 0; i<15; i++)
+  {
+    g_movingAvgMid[i] = 0;
+  }
+  //
 }
 
 //-- Audiodata ----------------------------------------------------------------
@@ -610,6 +618,7 @@ extern "C" void AudioData(const float* pAudioData, int iAudioDataLength, float *
 
   g_fftobj.time_to_frequency_domain(tempWave[0], g_sound.fSpectrum[0]);
   g_fftobj.time_to_frequency_domain(tempWave[1], g_sound.fSpectrum[1]);
+  AnalyzeSound();
 }
 
 
@@ -684,7 +693,7 @@ extern "C" void Render()
   UpdateTime();
   //g_timePass = 1.0f / 60.f;//fElapsedAppTime;
   g_timePass = fElapsedAppTime;
-  AnalyzeSound();
+  //AnalyzeSound();
 
 }
 
@@ -752,8 +761,9 @@ extern "C" void ADDON_Stop()
 //-----------------------------------------------------------------------------
 extern "C" void ADDON_Destroy()
 {
-  lastHue = 57000;
-  UpdateLights(maxBri, 255, 20);
+  //lastHue = 57000;
+  //UpdateLights((int)(maxBri*0.5f), 255, 20);
+  TurnLightsOff();
   g_fftobj.CleanUp();
   // always cleanup 
   curl_easy_cleanup(curl);
