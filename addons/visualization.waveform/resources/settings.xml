@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<settings>
+  <setting id="HueBridgeIP"    type="ipaddress"  label="30000" default="192.168.10.6"/>
+  <setting id="NumberOfLights" type="rangeofnum" label="30004" valueformat="30050" elements="50" rangeend="50" rangestart="0" default="3"/>
+  <setting id="MaxBri"         type="slider"     label="30001" option="int" range="10,5,255" default="75"/>
+  <setting id="HueRangeUpper"  type="slider"     label="30002" option="int" range="0,200,65280" default="65280"/>
+  <setting id="HueRangeLower"  type="slider"     label="30003" option="int" range="0,200,65280" default="47000"/>
+</settings>
