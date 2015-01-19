@@ -116,23 +116,22 @@ float g_bass, g_bassLast;
 float g_treble, g_trebleLast;
 float g_middle, g_middleLast;
 float g_timePass;
-bool g_finished, g_beat;
+bool g_finished;
+float g_movingAvgMid[128];
+float g_movingAvgMidSum;
 
 //todo: get bridge IP from settings or from https://www.meethue.com/api/nupnp
 std::string strHueBridgeIPAddress = "192.168.10.6";
 std::string strHost = "Host: " + strHueBridgeIPAddress;
 std::string strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
-std::string strURLLight1 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/1/state";
-std::string strURLLight2 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/2/state";
-int lastHue;
-int initialHue;
-int targetHue;
-int maxBri = 75;
+int numberOfLights = 3;
+int lastHue, initialHue, targetHue, maxBri, targetBri;
+int currentBri = 75;
+
 
 #ifndef _WIN32
 struct timespec systemClock;
 #endif
-
 
 
 void HTTP_POST(int bri, int sat, int transitionTime, bool on, bool off)
@@ -158,14 +157,6 @@ void HTTP_POST(int bri, int sat, int transitionTime, bool on, bool off)
       ",\"transitiontime\":" << transitionTime << "}";
     strJson = oss.str();
   }
-  /*
-  else if (sat > 0) //change saturation
-    strJson = "{\"bri\":" + std::to_string(bri) +
-      ",\"hue\":" + std::to_string(lastHue) + ",\"sat\":" + std::to_string(sat) + ",\"transitiontime\":" + std::to_string(transitionTime) + "}";
-  else //change lights
-    strJson = "{\"bri\":" + std::to_string(bri) +
-      ",\"hue\":" + std::to_string(lastHue) + ",\"transitiontime\":" + std::to_string(transitionTime) + "}";
-  */
 
   //request2 << "Content-Type: application/json" << endl;
   //struct curl_slist *headers = NULL;
@@ -178,24 +169,31 @@ void HTTP_POST(int bri, int sat, int transitionTime, bool on, bool off)
     //curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, strJson.c_str());
 
-    // Set the URL that is about to receive our POST. 
-    curl_easy_setopt(curl, CURLOPT_URL, strURLLight1.c_str());
-    // Perform the request, res will get the return code
-    res = curl_easy_perform(curl);
+    std::string strURLLight;
 
-    // Set the URL that is about to receive our POST.
-    curl_easy_setopt(curl, CURLOPT_URL, strURLLight2.c_str());
-    // Perform the request, res will get the return code
-    res = curl_easy_perform(curl);
-
-    // always cleanup 
+    for (int i = 1; i <= numberOfLights; i++)
+    {
+      std::ostringstream oss;
+      oss << i;
+      std::string strI = oss.str();
+      strURLLight = "http://" + strHueBridgeIPAddress +
+        "/api/KodiVisWave/lights/" + strI + "/state";
+      // Set the URL that is about to receive our POST. 
+      curl_easy_setopt(curl, CURLOPT_URL, strURLLight.c_str());
+      // Perform the request, res will get the return code
+      res = curl_easy_perform(curl);
+    }
   }
 }
-//
 
 void TurnLightsOn()
 {
   HTTP_POST(0, 0, 0, true, false);
+}
+
+void TurnLightsOff()
+{
+  HTTP_POST(0, 0, 0, false, true);
 }
 
 void UpdateLights(int bri, int sat, int transitionTime)
@@ -203,22 +201,32 @@ void UpdateLights(int bri, int sat, int transitionTime)
   HTTP_POST(bri, sat, transitionTime, false, false);
 }
 
-void FastBeatLights(int bri)
+void AdjustBrightness() //nicely bring the brightness up or down
 {
-  int transitionTime = int(10 / (60 / 60)); // transitionTime is in deciseconds
+  int briDifference = currentBri - targetBri;
+  if (briDifference > 7) currentBri = currentBri - 7;
+  else if (briDifference < -7) currentBri = currentBri + 7;
+  else currentBri = targetBri;
+  //printf("\nmaxBri = %i, currentBri = %i, targetBri = %i, mids = %f,\ntargetHue = %i, initialHue = %i, lastHue = %i\n",
+  //  maxBri, currentBri, targetBri, g_movingAvgMidSum*1000.0f / 15.0f, targetHue, initialHue, lastHue);
+}
+
+void FastBeatLights()
+{
+  AdjustBrightness();
   //transition the color immediately
-  UpdateLights(bri, 0, 0);
+  UpdateLights(currentBri + 10, 0, 0);
   //fade brightness
-  UpdateLights(5, 0, transitionTime); //fade
+  UpdateLights(5, 0, 10); //fade
 }
 
 void SlowBeatLights(int bri)
 {
-  int transitionTime = int(10 / (60 / 60)); // transitionTime is in deciseconds
+  AdjustBrightness();
   //transition the color immediately
   UpdateLights(bri, 0, 2);
   //fade brightness
-  UpdateLights(5, 0, transitionTime - 2); //fade
+  UpdateLights(5, 0, 8); //fade
 }
 
 void CycleHue(int huePoints)
@@ -239,13 +247,13 @@ void CycleHue(int huePoints)
   }
 }
 
-void CycleLights(int bri)
+void CycleLights()
 {
   //this is called once per second if no beats are detected
   CycleHue(3000);
-  UpdateLights(bri, 0, 10);
+  AdjustBrightness();
+  UpdateLights(currentBri, 0, 10);
 }
-
 //taken from Vortex
 float AdjustRateToFPS(float per_frame_decay_rate_at_fps1, float fps1, float actual_fps)
 {
@@ -387,19 +395,17 @@ void AnalyzeSound()
 #endif
 
   if (g_middle < 0) g_middle = g_middle * -1.0f;
-  if ((g_middle - g_middleLast) > 0.325f && !g_beat)
-  {
-    //beat?
-    g_beat = true;
-    FastBeatLights(maxBri);
+  if (g_bass < 0) g_bass = g_bass * -1.0f;
 
+  if (((g_middle - g_middleLast) > 0.25f || (g_bass - g_bassLast > 0.25f))
+    && ((fAppTime - fLightTime) > 0.3f))
+  {
+    //beat
+    FastBeatLights();
     CycleHue(1500);
     //changed lights
     fLightTime = fAppTime;
   }
-  else g_beat = false;
-
-
 }
 
 VOID InitTime()
@@ -465,10 +471,28 @@ VOID UpdateTime()
   // If beats aren't doing anything then cycle colors nicely
   if (fAppTime - fLightTime > 1.5f)
   {
-    CycleLights(maxBri); 
+    CycleLights(); 
     fLightTime = fAppTime;
   }
   
+  g_movingAvgMidSum = 0.0f;
+  //update the max brightness based on the moving avg of the mid levels
+  for (int i = 0; i<128; i++)
+  {
+    g_movingAvgMidSum += g_movingAvgMid[i];
+    if (i != 127)
+      g_movingAvgMid[i] = g_movingAvgMid[i + 1];
+    else
+      g_movingAvgMid[i] = (g_sound.avg[0][1] + g_sound.avg[1][1]) / 2.0f;
+  }
+
+  if ((g_movingAvgMidSum*1000.0f / 15.0f) < 0.5f &&
+    (g_movingAvgMidSum*1000.0f / 15.0f) > 0.1f)
+    targetBri = (int)(maxBri * 2 * g_movingAvgMidSum*1000.0f / 15.0f);
+  else if (g_movingAvgMidSum*1000.0f / 15.0f > 0.5f)
+    targetBri = maxBri;
+  else if (g_movingAvgMidSum*1000.0f / 15.0f < 0.1f)
+    targetBri = (int)(maxBri * 0.1f);
 
   // Update the scene stats once per second
   if (fAppTime - fUpdateTime > 1.0f)
@@ -504,8 +528,18 @@ ADDON_STATUS ADDON_Create(void* hdl, void* props)
   g_viewport.MinZ = 0;
   g_viewport.MaxZ = 1;
 
+  //return ADDON_STATUS_OK;
+  return ADDON_STATUS_NEED_SAVEDSETTINGS;
+}
+
+//-- Start --------------------------------------------------------------------
+// Called when a new soundtrack is played
+//-----------------------------------------------------------------------------
+extern "C" void Start(int iChannels, int iSamplesPerSec, int iBitsPerSample, const char* szSongName)
+{
+  //
   //set Hue registration command
-  std::string json = "{\"devicetype\":\"Kodi\",\"username\":\"KodiVisWave\"}";
+  const char json[] = "{\"devicetype\":\"Kodi\",\"username\":\"KodiVisWave\"}";
 
   //struct curl_slist *headers = NULL;
   curl = curl_easy_init();
@@ -522,33 +556,16 @@ ADDON_STATUS ADDON_Create(void* hdl, void* props)
     res = curl_easy_perform(curl);
 
     // always cleanup
-
   }
-
-
-  lastHue = 65280;
-  initialHue = lastHue;
-  targetHue = 56100;
 
   //turn the lights on
   TurnLightsOn();
-  UpdateLights(maxBri, 255, 30);
+  UpdateLights(currentBri, 255, 30);
 
   //initialize the beat detection
   InitTime();
   g_fftobj.Init(576, NUM_FREQUENCIES);
   //
-
-  return ADDON_STATUS_OK;
-  //return ADDON_STATUS_NEED_SAVEDSETTINGS;
-}
-
-//-- Start --------------------------------------------------------------------
-// Called when a new soundtrack is played
-//-----------------------------------------------------------------------------
-extern "C" void Start(int iChannels, int iSamplesPerSec, int iBitsPerSample, const char* szSongName)
-{
-  
 }
 
 //-- Audiodata ----------------------------------------------------------------
@@ -710,7 +727,7 @@ extern "C" unsigned GetPreset()
 //-----------------------------------------------------------------------------
 extern "C" bool IsLocked()
 {
-  return false;
+  return true;
 }
 
 //-- GetSubModules ------------------------------------------------------------
@@ -782,33 +799,32 @@ extern "C" void ADDON_FreeSettings()
 // Set a specific Setting value (called from XBMC)
 // !!! Add-on master function !!!
 //-----------------------------------------------------------------------------
-extern "C" ADDON_STATUS ADDON_SetSetting(const char *id, const void* value)
+extern "C" ADDON_STATUS ADDON_SetSetting(const char *strSetting, const void* value)
 {
-  if (!id || !value)
+  if (!strSetting || !value)
     return ADDON_STATUS_UNKNOWN;
 
-  //UserSettings& userSettings = g_Vortex->GetUserSettings();
-
-  if (strcmpi(id, "HueBridgeIP") == 0)
+  if (strcmp(strSetting, "NumberOfLights") == 0)
+    numberOfLights = *(int*)value;
+  else if (strcmp(strSetting, "HueBridgeIP") == 0)
   {
-    std::stringstream strm;
-    strm << value;
-    strHueBridgeIPAddress = strm.str();
+    char* array;
+    array = (char*)value;
+    strHueBridgeIPAddress = std::string(array);
+    strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
   }
-  else if (strcmpi(id, "MaxBri") == 0)
+  else if (strcmp(strSetting, "MaxBri") == 0)
+    maxBri = *(int*)value;
+  else if (strcmp(strSetting, "HueRangeUpper") == 0)
   {
-    maxBri = (int)value;
+    lastHue = *(int*)value;
+    initialHue = lastHue;
   }
-  else if (strcmpi(id, "HueRangeUpper") == 0)
-  {
-    initialHue = (int)value;
-  }
-  else if (strcmpi(id, "HueRangeLower") == 0)
-  {
-    targetHue = (int)value;
-  }
+  else if (strcmp(strSetting, "HueRangeLower") == 0)
+    targetHue = *(int*)value;
   else
     return ADDON_STATUS_UNKNOWN;
+
   return ADDON_STATUS_OK;
 }
 

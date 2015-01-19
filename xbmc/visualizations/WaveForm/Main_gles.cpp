@@ -133,19 +133,18 @@ float g_bass, g_bassLast;
 float g_treble, g_trebleLast;
 float g_middle, g_middleLast;
 float g_timePass;
-bool g_finished, g_beat;
+bool g_finished;
+float g_movingAvgMid[128];
+float g_movingAvgMidSum;
 
 
 //todo: get bridge IP from settings or from https://www.meethue.com/api/nupnp
 std::string strHueBridgeIPAddress = "192.168.10.6";
 std::string strHost = "Host: " + strHueBridgeIPAddress;
 std::string strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
-std::string strURLLight1 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/1/state";
-std::string strURLLight2 = "http://" + strHueBridgeIPAddress + "/api/KodiVisWave/lights/2/state";
-int lastHue;
-int initialHue;
-int targetHue;
-int maxBri = 75;
+int numberOfLights = 3;
+int lastHue, initialHue, targetHue, maxBri, targetBri;
+int currentBri = 75;
 
 
 struct timespec systemClock;
@@ -186,24 +185,31 @@ void HTTP_POST(int bri, int sat, int transitionTime, bool on, bool off)
     //curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, strJson.c_str());
 
-    // Set the URL that is about to receive our POST. 
-    curl_easy_setopt(curl, CURLOPT_URL, strURLLight1.c_str());
-    // Perform the request, res will get the return code
-    res = curl_easy_perform(curl);
+    std::string strURLLight;
 
-    // Set the URL that is about to receive our POST.
-    curl_easy_setopt(curl, CURLOPT_URL, strURLLight2.c_str());
-    // Perform the request, res will get the return code
-    res = curl_easy_perform(curl);
-
-    // always cleanup 
+    for (int i = 1; i <= numberOfLights; i++)
+    {
+      std::ostringstream oss;
+      oss << i;
+      std::string strI = oss.str();
+      strURLLight = "http://" + strHueBridgeIPAddress +
+        "/api/KodiVisWave/lights/" + strI + "/state";
+      // Set the URL that is about to receive our POST. 
+      curl_easy_setopt(curl, CURLOPT_URL, strURLLight.c_str());
+      // Perform the request, res will get the return code
+      res = curl_easy_perform(curl);
+    }
   }
 }
-//
 
 void TurnLightsOn()
 {
   HTTP_POST(0, 0, 0, true, false);
+}
+
+void TurnLightsOff()
+{
+  HTTP_POST(0, 0, 0, false, true);
 }
 
 void UpdateLights(int bri, int sat, int transitionTime)
@@ -211,22 +217,32 @@ void UpdateLights(int bri, int sat, int transitionTime)
   HTTP_POST(bri, sat, transitionTime, false, false);
 }
 
-void FastBeatLights(int bri)
+void AdjustBrightness() //nicely bring the brightness up or down
 {
-  int transitionTime = int(10 / (60 / 60)); // transitionTime is in deciseconds
+  int briDifference = currentBri - targetBri;
+  if (briDifference > 7) currentBri = currentBri - 7;
+  else if (briDifference < -7) currentBri = currentBri + 7;
+  else currentBri = targetBri;
+  //printf("\nmaxBri = %i, currentBri = %i, targetBri = %i, mids = %f,\ntargetHue = %i, initialHue = %i, lastHue = %i\n",
+  //  maxBri, currentBri, targetBri, g_movingAvgMidSum*1000.0f/15.0f,targetHue,initialHue,lastHue); 
+}
+
+void FastBeatLights()
+{
+  AdjustBrightness();
   //transition the color immediately
-  UpdateLights(bri, 0, 0);
+  UpdateLights(currentBri + 10, 0, 0);
   //fade brightness
-  UpdateLights(5, 0, transitionTime); //fade
+  UpdateLights(5, 0, 10); //fade
 }
 
 void SlowBeatLights(int bri)
 {
-  int transitionTime = int(10 / (60 / 60)); // transitionTime is in deciseconds
+  AdjustBrightness();
   //transition the color immediately
   UpdateLights(bri, 0, 2);
   //fade brightness
-  UpdateLights(5, 0, transitionTime - 2); //fade
+  UpdateLights(5, 0, 8); //fade
 }
 
 void CycleHue(int huePoints)
@@ -247,11 +263,12 @@ void CycleHue(int huePoints)
   }
 }
 
-void CycleLights(int bri)
+void CycleLights()
 {
   //this is called once per second if no beats are detected
   CycleHue(3000);
-  UpdateLights(bri, 0, 10);
+  AdjustBrightness();
+  UpdateLights(currentBri, 0, 10);
 }
 
 
@@ -369,35 +386,32 @@ void AnalyzeSound()
   else
     avg_mix = 0.5f;
 
+  //dealing with NaN's in linux
   if (g_bass != g_bass) g_bass = 0;
-  if (g_middle != g_middle) g_middle = 0; //f'ing NaN's in linux
+  if (g_middle != g_middle) g_middle = 0;
   if (g_treble != g_treble) g_treble = 0;
 
   g_bass = g_bass*avg_mix + newBass*(1 - avg_mix);
   g_middle = g_middle*avg_mix + newMiddle*(1 - avg_mix);
   //g_treble = g_treble*avg_mix + newTreble*(1 - avg_mix);  
-  //printf(" measure = %f*%f + %f*(1 - %f) ", g_middle,avg_mix,newMiddle,avg_mix);
 
   g_bass = std::max(std::min(g_bass, 1.0f), -1.0f);
   g_middle = std::max(std::min(g_middle, 1.0f), -1.0f);
   //g_treble = std::max(std::min(g_treble, 1.0f), -1.0f);
 
-  //printf("%f\n", (g_middle - g_middleLast));
 
   if (g_middle < 0) g_middle = g_middle * -1.0f;
-  if ((g_middle - g_middleLast) > 0.325f && !g_beat)
-  {
-    //beat?
-    g_beat = true;
-    FastBeatLights(maxBri);
+  if (g_bass < 0) g_bass = g_bass * -1.0f;
 
+  if (((g_middle - g_middleLast) > 0.25f || (g_bass - g_bassLast > 0.25f))
+    && ((fAppTime - fLightTime) > 0.3f))
+  {
+    //beat
+    FastBeatLights();
     CycleHue(1500);
     //changed lights
     fLightTime = fAppTime;
   }
-  else g_beat = false;
-
-
 }
 
 void InitTime()
@@ -424,8 +438,6 @@ void UpdateTime()
   fAppTime += fElapsedTime;
   //fElapsedAppTime = fElapsedTime;
 
-  printf("Time: %f, AppTime: %f, LightTime: %f\n", fTime, fAppTime, fLightTime);
-
   // Keep track of the frame count
   iFrames++;
 
@@ -434,9 +446,28 @@ void UpdateTime()
   // If beats aren't doing anything then cycle colors nicely
   if (fAppTime - fLightTime > 1.5f)
   {
-    CycleLights(maxBri);
+    CycleLights();
     fLightTime = fAppTime;
   }
+
+  g_movingAvgMidSum = 0.0f;
+  //update the max brightness based on the moving avg of the mid levels
+  for (int i = 0; i<128; i++)
+  {
+    g_movingAvgMidSum += g_movingAvgMid[i];
+    if (i != 127)
+      g_movingAvgMid[i] = g_movingAvgMid[i + 1];
+    else
+      g_movingAvgMid[i] = (g_sound.avg[0][1] + g_sound.avg[1][1]) / 2.0f;
+  }
+
+  if ((g_movingAvgMidSum*1000.0f / 15.0f) < 0.5f &&
+    (g_movingAvgMidSum*1000.0f / 15.0f) > 0.1f)
+    targetBri = (int)(maxBri * 2 * g_movingAvgMidSum*1000.0f / 15.0f);
+  else if (g_movingAvgMidSum*1000.0f / 15.0f > 0.5f)
+    targetBri = maxBri;
+  else if (g_movingAvgMidSum*1000.0f / 15.0f < 0.1f)
+    targetBri = (int)(maxBri * 0.1f);
 
   // Update the scene stats once per second
   if (fAppTime - fUpdateTime > 1.0f)
@@ -446,7 +477,6 @@ void UpdateTime()
     iFrames = 0;
   }
 }
-//
 
 
 //-- Create -------------------------------------------------------------------
@@ -468,7 +498,11 @@ ADDON_STATUS ADDON_Create(void* hdl, void* props)
     return ADDON_STATUS_UNKNOWN;
   }
 
-  //
+  return ADDON_STATUS_NEED_SETTINGS;
+}
+
+extern "C" void Start(int iChannels, int iSamplesPerSec, int iBitsPerSample, const char* szSongName)
+{
   //set Hue registration command
   const char json[] = "{\"devicetype\":\"Kodi\",\"username\":\"KodiVisWave\"}";
 
@@ -489,20 +523,62 @@ ADDON_STATUS ADDON_Create(void* hdl, void* props)
     // always cleanup
   }
 
-  lastHue = 65280;
-  initialHue = lastHue;
-  targetHue = 56100;
-
   //turn the lights on
   TurnLightsOn();
-  UpdateLights(maxBri, 255, 30);
+  UpdateLights(currentBri, 255, 30);
 
   //initialize the beat detection
   InitTime();
   g_fftobj.Init(576, NUM_FREQUENCIES);
-  //
 
-  return ADDON_STATUS_NEED_SETTINGS;
+  //initialize the moving average of mids
+  for (int i = 0; i<15; i++)
+  {
+    g_movingAvgMid[i] = 0;
+  }
+  //
+}
+
+extern "C" void AudioData(const float* pAudioData, int iAudioDataLength, float *pFreqData, int iFreqDataLength)
+{
+  int ipos = 0;
+  while (ipos < 512)
+  {
+    for (int i = 0; i < iAudioDataLength; i += 2)
+    {
+      g_fWaveform[0][ipos] = pAudioData[i]; // left channel
+      g_fWaveform[1][ipos] = pAudioData[i + 1]; // right channel
+      ipos++;
+      if (ipos >= 512) break;
+    }
+  }
+
+  //taken from Vortex
+  float tempWave[2][576];
+
+  int iPos = 0;
+  int iOld = 0;
+  //const float SCALE = (1.0f / 32768.0f ) * 255.0f;
+  while (iPos < 576)
+  {
+    for (int i = 0; i < iAudioDataLength; i += 2)
+    {
+      g_sound.fWaveform[0][iPos] = float((pAudioData[i] / 32768.0f) * 255.0f);
+      g_sound.fWaveform[1][iPos] = float((pAudioData[i + 1] / 32768.0f) * 255.0f);
+
+      // damp the input into the FFT a bit, to reduce high-frequency noise:
+      tempWave[0][iPos] = 0.5f * (g_sound.fWaveform[0][iPos] + g_sound.fWaveform[0][iOld]);
+      tempWave[1][iPos] = 0.5f * (g_sound.fWaveform[1][iPos] + g_sound.fWaveform[1][iOld]);
+      iOld = iPos;
+      iPos++;
+      if (iPos >= 576)
+        break;
+    }
+  }
+
+  g_fftobj.time_to_frequency_domain(tempWave[0], g_sound.fSpectrum[0]);
+  g_fftobj.time_to_frequency_domain(tempWave[1], g_sound.fSpectrum[1]);
+  AnalyzeSound();
 }
 
 //-- Render -------------------------------------------------------------------
@@ -590,55 +666,8 @@ extern "C" void Render()
   UpdateTime();
   //g_timePass = 1.0f / 60.f;//fElapsedAppTime;
   g_timePass = fElapsedAppTime;
-  AnalyzeSound();
 
 }
-
-extern "C" void Start(int iChannels, int iSamplesPerSec, int iBitsPerSample, const char* szSongName)
-{
-}
-
-extern "C" void AudioData(const float* pAudioData, int iAudioDataLength, float *pFreqData, int iFreqDataLength)
-{
-  int ipos = 0;
-  while (ipos < 512)
-  {
-    for (int i = 0; i < iAudioDataLength; i += 2)
-    {
-      g_fWaveform[0][ipos] = pAudioData[i]; // left channel
-      g_fWaveform[1][ipos] = pAudioData[i + 1]; // right channel
-      ipos++;
-      if (ipos >= 512) break;
-    }
-  }
-
-  //taken from Vortex
-  float tempWave[2][576];
-
-  int iPos = 0;
-  int iOld = 0;
-  //const float SCALE = (1.0f / 32768.0f ) * 255.0f;
-  while (iPos < 576)
-  {
-    for (int i = 0; i < iAudioDataLength; i += 2)
-    {
-      g_sound.fWaveform[0][iPos] = float((pAudioData[i] / 32768.0f) * 255.0f);
-      g_sound.fWaveform[1][iPos] = float((pAudioData[i + 1] / 32768.0f) * 255.0f);
-
-      // damp the input into the FFT a bit, to reduce high-frequency noise:
-      tempWave[0][iPos] = 0.5f * (g_sound.fWaveform[0][iPos] + g_sound.fWaveform[0][iOld]);
-      tempWave[1][iPos] = 0.5f * (g_sound.fWaveform[1][iPos] + g_sound.fWaveform[1][iOld]);
-      iOld = iPos;
-      iPos++;
-      if (iPos >= 576)
-        break;
-    }
-  }
-
-  g_fftobj.time_to_frequency_domain(tempWave[0], g_sound.fSpectrum[0]);
-  g_fftobj.time_to_frequency_domain(tempWave[1], g_sound.fSpectrum[1]);
-}
-
 
 //-- GetInfo ------------------------------------------------------------------
 // Tell XBMC our requirements
@@ -688,7 +717,7 @@ extern "C" unsigned GetPreset()
 //-----------------------------------------------------------------------------
 extern "C" bool IsLocked()
 {
-  return false;
+  return true;
 }
 
 //-- Stop ---------------------------------------------------------------------
@@ -712,8 +741,9 @@ extern "C" void ADDON_Destroy()
     vis_shader = NULL;
   }
 
-  lastHue = 57000;
-  UpdateLights(maxBri, 255, 30);
+  //lastHue = 57000;
+  //UpdateLights(maxBri, 255, 30);
+  TurnLightsOff();
   g_fftobj.CleanUp();
   // always cleanup 
   curl_easy_cleanup(curl);
@@ -761,8 +791,31 @@ extern "C" void ADDON_FreeSettings()
 //-----------------------------------------------------------------------------
 extern "C" ADDON_STATUS ADDON_SetSetting(const char *strSetting, const void* value)
 {
-  //    return ADDON_STATUS_OK;
-  return ADDON_STATUS_UNKNOWN;
+  if (!strSetting || !value)
+    return ADDON_STATUS_UNKNOWN;
+
+  if (strcmp(strSetting, "NumberOfLights") == 0)
+    numberOfLights = *(int*)value;
+  else if (strcmp(strSetting, "HueBridgeIP") == 0)
+  {
+    char* array;
+    array = (char*)value;
+    strHueBridgeIPAddress = std::string(array);
+    strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
+  }
+  else if (strcmp(strSetting, "MaxBri") == 0)
+    maxBri = *(int*)value;
+  else if (strcmp(strSetting, "HueRangeUpper") == 0)
+  {
+    lastHue = *(int*)value;
+    initialHue = lastHue;
+  }
+  else if (strcmp(strSetting, "HueRangeLower") == 0)
+    targetHue = *(int*)value;
+  else
+    return ADDON_STATUS_UNKNOWN;
+
+  return ADDON_STATUS_OK;
 }
 
 //-- Announce -----------------------------------------------------------------
