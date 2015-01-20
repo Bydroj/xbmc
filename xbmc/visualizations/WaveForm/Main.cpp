@@ -34,7 +34,7 @@
 //th
 #include <curl/curl.h>
 #include "fft.h"
-#include <string>
+#include <cstring>
 #include <math.h>
 #include <sstream>
 //
@@ -127,6 +127,7 @@ std::string strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
 int numberOfLights = 3;
 int lastHue, initialHue, targetHue, maxBri, targetBri;
 int currentBri = 75;
+float beatThreshold = 0.25f;
 
 
 #ifndef _WIN32
@@ -214,8 +215,11 @@ void AdjustBrightness() //nicely bring the brightness up or down
 void FastBeatLights()
 {
   AdjustBrightness();
+  //figure out a good brightness increase
+  int beatBri = (int)(currentBri * 1.5f);
+  if (beatBri > 255) beatBri = 255;
   //transition the color immediately
-  UpdateLights(currentBri + 10, 0, 0);
+  UpdateLights(beatBri, 0, 0);
   //fade brightness
   UpdateLights(5, 0, 10); //fade
 }
@@ -223,8 +227,11 @@ void FastBeatLights()
 void SlowBeatLights()
 {
   AdjustBrightness();
+  //figure out a good brightness increase
+  int beatBri = (int)(currentBri * 1.25f);
+  if (beatBri > 255) beatBri = 255;
   //transition the color immediately
-  UpdateLights(currentBri, 0, 2);
+  UpdateLights(beatBri, 0, 2);
   //fade brightness
   UpdateLights(5, 0, 8); //fade
 }
@@ -271,7 +278,6 @@ float AdjustRateToFPS(float per_frame_decay_rate_at_fps1, float fps1, float actu
 //taken from Vortex
 void AnalyzeSound()
 {
-  // Some bits of this were pinched from Milkdrop...
   int m_fps = 60;
 
   // sum (left channel) spectrum up into 3 bands
@@ -374,10 +380,10 @@ void AnalyzeSound()
     avg_mix = 0.5f;
   else
     avg_mix = 0.5f;
-  
+
   //crazy NaN's in linux
   if (g_bass != g_bass) g_bass = 0;
-  if (g_middle != g_middle) g_middle = 0; 
+  if (g_middle != g_middle) g_middle = 0;
   if (g_treble != g_treble) g_treble = 0;
 
   g_bass = g_bass*avg_mix + newBass*(1 - avg_mix);
@@ -397,7 +403,8 @@ void AnalyzeSound()
   if (g_middle < 0) g_middle = g_middle * -1.0f;
   if (g_bass < 0) g_bass = g_bass * -1.0f;
 
-  if (((g_middle - g_middleLast) > 0.25f || (g_bass - g_bassLast > 0.25f))
+  if (((g_middle - g_middleLast) > beatThreshold ||
+    (g_bass - g_bassLast > beatThreshold))
     && ((fAppTime - fLightTime) > 0.3f))
   {
     //beat
@@ -408,7 +415,7 @@ void AnalyzeSound()
   }
 }
 
-VOID InitTime()
+void InitTime()
 {
 #ifdef _WIN32
   // Get the frequency of the timer
@@ -440,7 +447,7 @@ VOID InitTime()
 
 }
 
-VOID UpdateTime()
+void UpdateTime()
 {
 #ifdef _WIN32
   QueryPerformanceCounter(&qwTime);
@@ -473,6 +480,7 @@ VOID UpdateTime()
   {
     CycleLights();
     fLightTime = fAppTime;
+    //printf("\nBeat threshold: %f\n",beatThreshold);
   }
 
   g_movingAvgMidSum = 0.0f;
@@ -823,6 +831,8 @@ extern "C" ADDON_STATUS ADDON_SetSetting(const char *strSetting, const void* val
     strHueBridgeIPAddress = std::string(array);
     strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
   }
+  else if (strcmp(strSetting, "BeatThreshold") == 0)
+    beatThreshold = *(float*)value;
   else if (strcmp(strSetting, "MaxBri") == 0)
     maxBri = *(int*)value;
   else if (strcmp(strSetting, "HueRangeUpper") == 0)

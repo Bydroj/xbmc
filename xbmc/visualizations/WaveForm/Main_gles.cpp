@@ -145,6 +145,7 @@ std::string strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
 int numberOfLights = 3;
 int lastHue, initialHue, targetHue, maxBri, targetBri;
 int currentBri = 75;
+float beatThreshold = 0.25f;
 
 
 struct timespec systemClock;
@@ -230,17 +231,23 @@ void AdjustBrightness() //nicely bring the brightness up or down
 void FastBeatLights()
 {
   AdjustBrightness();
+  //figure out a good brightness increase
+  int beatBri = (int)(currentBri * 1.5f);
+  if (beatBri > 255) beatBri = 255;
   //transition the color immediately
-  UpdateLights(currentBri + 10, 0, 0);
+  UpdateLights(beatBri, 0, 0);
   //fade brightness
   UpdateLights(5, 0, 10); //fade
 }
 
-void SlowBeatLights(int bri)
+void SlowBeatLights()
 {
   AdjustBrightness();
+  //figure out a good brightness increase
+  int beatBri = (int)(currentBri * 1.25f);
+  if (beatBri > 255) beatBri = 255;
   //transition the color immediately
-  UpdateLights(bri, 0, 2);
+  UpdateLights(beatBri, 0, 2);
   //fade brightness
   UpdateLights(5, 0, 8); //fade
 }
@@ -403,7 +410,8 @@ void AnalyzeSound()
   if (g_middle < 0) g_middle = g_middle * -1.0f;
   if (g_bass < 0) g_bass = g_bass * -1.0f;
 
-  if (((g_middle - g_middleLast) > 0.25f || (g_bass - g_bassLast > 0.25f))
+  if (((g_middle - g_middleLast) > beatThreshold ||
+    (g_bass - g_bassLast > beatThreshold))
     && ((fAppTime - fLightTime) > 0.3f))
   {
     //beat
@@ -803,6 +811,8 @@ extern "C" ADDON_STATUS ADDON_SetSetting(const char *strSetting, const void* val
     strHueBridgeIPAddress = std::string(array);
     strURLRegistration = "http://" + strHueBridgeIPAddress + "/api";
   }
+  else if (strcmp(strSetting, "BeatThreshold") == 0)
+    beatThreshold = *(float*)value;
   else if (strcmp(strSetting, "MaxBri") == 0)
     maxBri = *(int*)value;
   else if (strcmp(strSetting, "HueRangeUpper") == 0)
