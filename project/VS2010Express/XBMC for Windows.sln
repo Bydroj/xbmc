@@ -88,6 +88,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "visVortex", "..\..\xbmc\vis
 		{034B1D02-CA92-455D-8866-DB95BEE49C10} = {034B1D02-CA92-455D-8866-DB95BEE49C10}
 	EndProjectSection
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "WaveForHue", "..\..\xbmc\visualizations\WaveForHue\WaveForHue.vcxproj", "{1CFB9E05-C7B6-49C1-AC12-1EC0484867A0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug Testsuite|Win32 = Debug Testsuite|Win32
@@ -290,6 +292,7 @@ Global
 		{87DA0A1E-3F33-4927-A5E5-2D58F2C58E17}.Debug|Win32.Build.0 = Debug|Win32
 		{87DA0A1E-3F33-4927-A5E5-2D58F2C58E17}.Release|Win32.ActiveCfg = Release|Win32
 		{87DA0A1E-3F33-4927-A5E5-2D58F2C58E17}.Release|Win32.Build.0 = Release|Win32
+		{87DA0A1E-3F33-4927-A5E5-2D58F2C58E17}.Release|Win32.Deploy.0 = Release|Win32
 		{034B1D02-CA92-455D-8866-DB95BEE49C10}.Debug Testsuite|Win32.ActiveCfg = Debug|Win32
 		{034B1D02-CA92-455D-8866-DB95BEE49C10}.Debug Testsuite|Win32.Build.0 = Debug|Win32
 		{034B1D02-CA92-455D-8866-DB95BEE49C10}.Debug|Win32.ActiveCfg = Debug|Win32
@@ -312,6 +315,12 @@ Global
 		{AFF288D5-8A77-4817-8DD9-364E183CDBF8}.Debug|Win32.Build.0 = Debug|Win32
 		{AFF288D5-8A77-4817-8DD9-364E183CDBF8}.Release|Win32.ActiveCfg = Release|Win32
 		{AFF288D5-8A77-4817-8DD9-364E183CDBF8}.Release|Win32.Build.0 = Release|Win32
+		{1CFB9E05-C7B6-49C1-AC12-1EC0484867A0}.Debug Testsuite|Win32.ActiveCfg = Debug|Win32
+		{1CFB9E05-C7B6-49C1-AC12-1EC0484867A0}.Debug Testsuite|Win32.Build.0 = Debug|Win32
+		{1CFB9E05-C7B6-49C1-AC12-1EC0484867A0}.Debug|Win32.ActiveCfg = Debug|Win32
+		{1CFB9E05-C7B6-49C1-AC12-1EC0484867A0}.Debug|Win32.Build.0 = Debug|Win32
+		{1CFB9E05-C7B6-49C1-AC12-1EC0484867A0}.Release|Win32.ActiveCfg = Release|Win32
+		{1CFB9E05-C7B6-49C1-AC12-1EC0484867A0}.Release|Win32.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
