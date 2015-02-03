@@ -1,9 +1,5 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
-<addon
-  id="visualization.waveforhue"
-  version="1.0.0"
-  name="WaveforHue"
-  provider-name="MrC">
+<addon id="visualization.waveforhue" name="WaveforHue" version="1.0.1" provider-name="hardyt">
   <extension
     point="xbmc.player.musicviz"
     library_linux="WaveforHue.vis"
@@ -21,10 +17,10 @@
     <summary lang="da">Visualisering der viser 2 bølgeagtige grafer på skærmen</summary>
     <summary lang="de">Eine Visualisierung, die zwei wellenförmige Grafiken auf dem Bildschirm zeigt</summary>
     <summary lang="el">Οπτικοποίηση που εμφανίζει 2 Κυματομορφές στην οθόνη</summary>
-    <summary lang="en">Visualisation showing 2 Waveform Graphs on the screen + Hue interaction</summary>
-    <summary lang="en_AU">Visualisation showing 2 Waveform Graphs on the screen + Hue interaction</summary>
-    <summary lang="en_NZ">Visualisation showing 2 Waveform Graphs on the screen + Hue interaction</summary>
-    <summary lang="en_US">Visualization showing 2 Waveform Graphs on the screen + Hue interaction</summary>
+    <summary lang="en">Visualisation showing 2 Waveform Graphs on the screen and Hue interaction</summary>
+    <summary lang="en_AU">Visualisation showing 2 Waveform Graphs on the screen and Hue interaction</summary>
+    <summary lang="en_NZ">Visualisation showing 2 Waveform Graphs on the screen and Hue interaction</summary>
+    <summary lang="en_US">Visualization showing 2 Waveform Graphs on the screen and Hue interaction</summary>
     <summary lang="es">Visualización mostrando 2 gráficos de ondas en la pantalla</summary>
     <summary lang="es_AR">Visualización mostrando 2 gráficos de ondas en la pantalla</summary>
     <summary lang="es_MX">Visualización que muestra 2 Gráficos de Forma de onda</summary>
